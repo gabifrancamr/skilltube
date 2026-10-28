@@ -1,16 +1,14 @@
-﻿# Skill Tube — Plataforma Educacional Web
+﻿https://gabifrancamr.github.io/skilltube/
+
+# Skill Tube — Plataforma Educacional Web
 
 Protótipo com HTML5, CSS3 e JavaScript (ES6+): assista à playlist de programação integrada, **importe playlists públicas do YouTube**, acompanhe progresso e favoritos no `localStorage` — sem build e sem npm.
 
 ## Como abrir / iniciar
 
-1. Abra a pasta `EduPlay` no VS Code (ou Cursor).
+1. Abra a pasta `EduPlay` no VS Code.
 2. Use a extensão **Live Server** (ou outro servidor HTTP estático) e abra `index.html`.
-3. Evite abrir via `file://` — o player do YouTube pode falhar (erro 153 / restrições de embed).
-
-```bash
-python -m http.server 5500
-```
+3. **ATENÇÃO**: Evite abrir via `file://` — o player do YouTube pode falhar (erro 153 / restrições de embed).
 
 ## Estrutura
 
