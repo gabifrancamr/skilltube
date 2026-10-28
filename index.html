@@ -1,0 +1,293 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Skill Tube — plataforma educacional com videoaulas do YouTube, progresso e favoritos."
+    />
+    <title>Skill Tube — Plataforma Educacional</title>
+    <link rel="stylesheet" href="css/style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Ctext x='16' y='22' text-anchor='middle' fill='white' font-size='14' font-family='sans-serif' font-weight='700'%3EST%3C/text%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <a class="sr-only" href="#conteudo-principal">Ir para o conteúdo</a>
+
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="logo" href="./index.html" aria-label="Skill Tube — início">
+          <span class="logo__mark" aria-hidden="true">ST</span>
+          <span>Skill Tube</span>
+        </a>
+
+        <button
+          type="button"
+          class="nav-toggle"
+          id="nav-toggle"
+          aria-expanded="false"
+          aria-controls="nav-menu"
+          aria-label="Abrir menu"
+        >
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+
+        <ul class="nav-menu" id="nav-menu">
+          <li>
+            <button type="button" class="nav-link is-active" data-nav="home">Início</button>
+          </li>
+          <li>
+            <button type="button" class="nav-link" data-nav="course">Meu curso</button>
+          </li>
+          <li>
+            <button type="button" class="nav-link" data-nav="favorites">Favoritos</button>
+          </li>
+        </ul>
+
+        <div class="header-tools">
+          <div class="search" role="search">
+            <span class="search__icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="7" />
+                <path d="M20 20l-3.5-3.5" />
+              </svg>
+            </span>
+            <label class="sr-only" for="search-input">Pesquisar aulas</label>
+            <input
+              id="search-input"
+              type="search"
+              placeholder="Pesquisar aulas…"
+              autocomplete="off"
+            />
+            <button type="button" class="search__clear" id="search-clear" hidden aria-label="Limpar pesquisa">
+              ×
+            </button>
+          </div>
+
+          <button type="button" class="btn-fav-nav" data-nav="favorites" aria-label="Área de favoritos">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+            </svg>
+            <span>Favoritos</span>
+          </button>
+
+          <div class="header-progress" aria-label="Progresso do curso">
+            <div class="header-progress__bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div class="header-progress__fill" id="header-progress-fill"></div>
+            </div>
+            <span class="header-progress__text" id="header-progress-text">0% concluído</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="main" id="conteudo-principal">
+      <!-- HOME -->
+      <section class="view is-active" id="view-home" aria-labelledby="home-title">
+        <div class="hero">
+          <article class="welcome-card">
+            <p class="eyebrow">Bem-vindo ao Skill Tube</p>
+            <h1 id="home-title">Estude no seu ritmo com videoaulas do YouTube</h1>
+            <p>
+              Acompanhe o curso da playlist oficial, marque o progresso, salve favoritos e continue
+              de onde parou — tudo salvo neste navegador.
+            </p>
+            <div class="welcome-actions">
+              <button type="button" class="btn btn--primary" id="btn-continue">Continuar estudando</button>
+              <button type="button" class="btn btn--secondary" id="btn-open-course">Abrir curso</button>
+            </div>
+            <div class="progress-panel">
+              <div class="progress-panel__top">
+                <strong id="home-progress-percent">0%</strong>
+                <span id="home-progress-text">0 de 6 aulas</span>
+              </div>
+              <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-label="Conclusão do curso">
+                <div class="progress-bar__fill" id="home-progress-fill"></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="featured-card">
+            <div class="featured-card__media">
+              <img
+                src="https://i.ytimg.com/vi/G5OLtuHulhU/hqdefault.jpg"
+                alt="Capa do curso na playlist oficial do YouTube"
+                width="480"
+                height="360"
+              />
+              <span class="featured-card__badge">Em destaque</span>
+            </div>
+            <div class="featured-card__body">
+              <p class="eyebrow">Curso oficial</p>
+              <h2>Curso Skill Tube — Playlist Oficial</h2>
+              <p>Seis videoaulas incorporadas via player oficial do YouTube.</p>
+              <a
+                class="btn btn--secondary btn--sm"
+                href="https://www.youtube.com/watch?v=G5OLtuHulhU&amp;list=PLuqN50UwdfI8tvNQTp3q2PuQWImoyi4-q"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Ver playlist no YouTube
+              </a>
+            </div>
+          </article>
+        </div>
+
+        <section class="section" aria-labelledby="meu-curso-title">
+          <h2 class="section-title" id="meu-curso-title">Meu curso</h2>
+          <p class="section-lead">
+            Selecione uma das 6 videoaulas. Os títulos genéricos podem ser atualizados em
+            <code>js/courses.js</code> quando os metadados oficiais estiverem disponíveis.
+          </p>
+
+          <p class="search-hint" id="search-results" hidden>Resultados da pesquisa</p>
+          <div class="empty-state" id="search-empty" hidden role="status">
+            Nenhuma aula encontrada com esse título. Tente outro termo.
+          </div>
+
+          <div class="cards-grid" id="lesson-cards"></div>
+        </section>
+
+        <section class="section" id="continue-section" aria-labelledby="continue-title">
+          <h2 class="section-title" id="continue-title">Continue de onde parou</h2>
+          <p class="section-lead">Retome a última aula acessada neste dispositivo.</p>
+          <div class="continue-card" id="continue-card"></div>
+        </section>
+      </section>
+
+      <!-- COURSE -->
+      <section class="view" id="view-course" hidden aria-labelledby="course-title">
+        <div class="course-layout">
+          <div class="course-main">
+            <div class="course-intro">
+              <p class="eyebrow">Área do curso</p>
+              <h1 id="course-title">Curso Skill Tube — Playlist Oficial</h1>
+              <p>
+                Assista às aulas pelo player oficial do YouTube. O progresso é atualizado quando você
+                marca uma aula como concluída — não há detecção automática de visualização completa.
+              </p>
+              <div class="course-progress-row">
+                <span id="course-progress-text">0 de 6 aulas · 0%</span>
+                <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-label="Progresso do curso">
+                  <div class="progress-bar__fill" id="course-progress-fill"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="player-wrap" id="player-wrap">
+              <div class="player-ratio">
+                <div id="player-host">
+                  <iframe
+                    id="player-frame"
+                    title="Player de videoaula do YouTube"
+                    src="https://www.youtube.com/embed/G5OLtuHulhU?rel=0&amp;modestbranding=1&amp;enablejsapi=1"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowfullscreen
+                    referrerpolicy="strict-origin-when-cross-origin"
+                  ></iframe>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                class="player-nav player-nav--prev"
+                id="player-prev"
+                aria-label="Aula anterior"
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                  <path d="M15 18l-6-6 6-6" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="player-nav player-nav--next"
+                id="player-next"
+                aria-label="Próxima aula"
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                  <path d="M9 18l6-6-6-6" />
+                </svg>
+              </button>
+
+              <div class="player-fallback" id="player-fallback" hidden role="alert">
+                <div>
+                  <p>Não foi possível carregar o vídeo incorporado.</p>
+                  <p>
+                    <a
+                      id="player-fallback-link"
+                      href="https://www.youtube.com/watch?v=G5OLtuHulhU&amp;list=PLuqN50UwdfI8tvNQTp3q2PuQWImoyi4-q"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Abrir no YouTube
+                    </a>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="lesson-details">
+              <div class="lesson-details__top">
+                <h2 id="lesson-title">Aula 1</h2>
+                <span class="lesson-indicator" id="lesson-indicator">Aula 1 de 6</span>
+              </div>
+              <p id="lesson-description">
+                Primeira videoaula da playlist. Abra o player para assistir ao conteúdo oficial no YouTube.
+              </p>
+              <div class="lesson-actions">
+                <button type="button" class="btn btn--secondary" id="btn-prev">Aula anterior</button>
+                <button type="button" class="btn btn--secondary" id="btn-next">Próxima aula</button>
+                <button type="button" class="btn btn--ghost" id="btn-complete" aria-pressed="false">
+                  Marcar como concluída
+                </button>
+                <button type="button" class="btn btn--ghost" id="btn-favorite" aria-pressed="false">
+                  Favoritar
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <aside class="course-sidebar" aria-labelledby="lista-aulas-title">
+            <h2 id="lista-aulas-title">Lista de aulas</h2>
+            <ul class="lesson-list" id="lesson-list"></ul>
+          </aside>
+        </div>
+      </section>
+
+      <!-- FAVORITES -->
+      <section class="view" id="view-favorites" hidden aria-labelledby="favorites-title">
+        <h2 class="section-title" id="favorites-title">Favoritos</h2>
+        <p class="section-lead">
+          Aulas que você marcou com estrela. Os favoritos ficam salvos no localStorage deste navegador.
+        </p>
+        <div class="empty-state" id="favorites-empty" role="status">
+          Você ainda não favoritou nenhuma aula. Abra o curso e toque em Favoritar.
+        </div>
+        <div class="cards-grid" id="favorites-list"></div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>
+        Skill Tube · Protótipo educacional ·
+        <a
+          href="https://www.youtube.com/playlist?list=PLuqN50UwdfI8tvNQTp3q2PuQWImoyi4-q"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Playlist no YouTube
+        </a>
+      </p>
+    </footer>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="js/courses.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>
