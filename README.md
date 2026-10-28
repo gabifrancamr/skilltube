@@ -1,80 +1,80 @@
 ﻿# Skill Tube — Plataforma Educacional Web
 
-Protótipo funcional de plataforma de estudos com 6 videoaulas de uma playlist do YouTube, progresso, favoritos e pesquisa — feito com HTML5, CSS3 e JavaScript (ES6+), sem build e sem npm.
+Protótipo com HTML5, CSS3 e JavaScript (ES6+): assista à playlist de programação integrada, **importe playlists públicas do YouTube**, acompanhe progresso e favoritos no `localStorage` — sem build e sem npm.
 
 ## Como abrir / iniciar
 
 1. Abra a pasta `EduPlay` no VS Code (ou Cursor).
-2. Use a extensão **Live Server** (ou qualquer servidor HTTP estático) e abra `index.html`.
-3. **Atenção**: Alguns navegadores restringem iframes do YouTube em `file://`; um servidor local é recomendado.
+2. Use a extensão **Live Server** (ou outro servidor HTTP estático) e abra `index.html`.
+3. Evite abrir via `file://` — o player do YouTube pode falhar (erro 153 / restrições de embed).
 
+```bash
+python -m http.server 5500
+```
 
 ## Estrutura
 
 ```
 EduPlay/
 ├── index.html
-├── css/
-│   └── style.css
+├── css/style.css
 ├── js/
-│   ├── app.js        # Lógica (navegação, progresso, favoritos, pesquisa)
-│   └── courses.js    # Dados do curso (editáveis)
-├── assets/
-│   └── images/
+│   ├── app.js        # Biblioteca, importação, player, progresso
+│   └── courses.js    # Curso padrão + parse de URLs de playlist
+├── assets/images/
 └── README.md
 ```
 
-## Integração com o YouTube
+## Importar playlist
 
-- Playlist oficial: [PLuqN50UwdfI8tvNQTp3q2PuQWImoyi4-q](https://www.youtube.com/watch?v=G5OLtuHulhU&list=PLuqN50UwdfI8tvNQTp3q2PuQWImoyi4-q)
-- Cada aula usa o **ID real** no embed: `https://www.youtube.com/embed/ID`
-- IDs cadastrados: `G5OLtuHulhU`, `gdIpsayKz78`, `RtziM3qy8V4`, `VBAFQTXljxc`, `NcVeeaLXoAY`, `jf16-xhoTZE`
-- O embed **não** inclui `list=` para evitar as setas nativas da playlist do YouTube (que mudavam o vídeo sem atualizar a UI).
-- Navegação oficial da Skill Tube: setas sobrepostas ao player + botões “Aula anterior/próxima” + lista lateral — todos via `selecionarAula(indice)`.
-- YouTube IFrame Player API: troca de vídeo, erros e sincronização se o vídeo no player mudar.
-- Se o embed falhar, há mensagem amigável e link “Abrir no YouTube”.
+1. Menu **Importar** (ou botão na home).
+2. Cole um link válido, por exemplo:
+   - `https://www.youtube.com/playlist?list=PLAYLIST_ID`
+   - `https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID`
+   - `https://www.youtube.com/embed/videoseries?list=PLAYLIST_ID`
+3. (Opcional) informe um nome para o curso.
+4. Clique em **Adicionar playlist**.
 
+Validação: usa a classe `URL` do JavaScript, aceita apenas hosts do YouTube e exige o parâmetro `list`. O parâmetro `index` **não** é usado como identificador.
 
-## Progresso e favoritos (localStorage)
+Reprodução: `https://www.youtube.com/embed/videoseries?list=PLAYLIST_ID` via **YouTube IFrame Player API** (`listType: 'playlist'`), com navegação por `playVideoAt` / `nextVideo` / `previousVideo` e sincronização por `getPlaylistIndex` / `getPlaylist`.
+
+## Biblioteca e persistência
 
 | Chave | Conteúdo |
 |-------|----------|
-| `skilltube_completed` | IDs das aulas marcadas como concluídas |
-| `skilltube_favorites` | IDs das aulas favoritas |
-| `skilltube_last_lesson` | Última aula aberta (“continuar estudando”) |
+| `skilltube_library` | Playlists salvas (id, URL, título, data, aulas descobertas) |
+| `skilltube_progress` | Progresso por playlist (`completed`, `favorites`, `lastIndex`) |
+| `skilltube_active_playlist` | Playlist em estudo |
 
-O percentual de conclusão = `(aulas concluídas / 6) × 100`.  
-**Não** há detecção automática de “assistiu o vídeo inteiro” (isso exigiria a YouTube IFrame Player API com eventos confiáveis e ainda assim tem limitações).
+A playlist de programação oficial (`PLuqN50UwdfI8tvNQTp3q2PuQWImoyi4-q`) entra automaticamente na biblioteca e **não pode ser removida**. Progresso antigo (`skilltube_completed` etc.) é migrado automaticamente.
 
-## Funcionalidades implementadas
+Não há sincronização entre dispositivos ou contas — tudo é local ao navegador.
 
-- Página inicial com boas-vindas, banner do curso e “Continuar estudando”
-- Cards das 6 aulas e seção “Continue de onde parou”
-- Área do curso com lista lateral, player, título/descrição, anterior/próxima
-- Marcar/desmarcar aula como concluída + barra de progresso
-- Favoritar/desfavoritar com persistência
-- Pesquisa por título + mensagem quando não há resultados
-- Menu responsivo para mobile
-- Indicador “Aula X de 6”
-- Fallback para abrir no YouTube
+## Funcionalidades
 
-## Limitações do protótipo
-
-- Títulos das aulas 2–6 são placeholders até preenchimento manual ou via API oficial.
-- IDs individuais das aulas 2–6 não estão cadastrados; a navegação usa índice da playlist.
-- Progresso depende de marcação manual (“Marcar como concluída”).
-- Dados ficam só no navegador local (não há conta, backend ou sincronização).
-- Thumbnails das aulas sem `youtubeVideoId` reutilizam a capa do primeiro vídeo.
-- Alguns vídeos podem bloquear embed conforme política do proprietário no YouTube.
+- Importar / rejeitar links inválidos com mensagens claras
+- Minhas playlists: abrir, continuar, remover (exceto a oficial), ver progresso
+- Player responsivo + setas Skill Tube + lista lateral
+- Sincronização quando o vídeo muda pelos controles do YouTube
+- Marcar concluída, favoritos, pesquisa nas aulas do curso ativo
+- Fallback com link “Abrir no YouTube” se o embed falhar
+- Menu responsivo
 
 ## Como testar
 
-1. Abra o curso e navegue entre as aulas (lista, anterior/próxima).
-2. Marque 2 aulas como concluídas e confira o percentual (deve ser ~33%).
-3. Favoritar uma aula e abra a seção Favoritos.
-4. Recarregue a página: progresso, favoritos e última aula devem permanecer.
-5. Pesquise um título inexistente e confirme a mensagem de “nenhuma aula encontrada”.
-6. Redimensione a janela ou use o DevTools em modo mobile e teste o menu.
+1. Adicionar playlist com `watch?v=...&list=...`
+2. Adicionar com `/playlist?list=...`
+3. Rejeitar vídeo sem `list=`
+4. Rejeitar link de outro site
+5. Abrir playlist salva na biblioteca
+6. Navegar com setas / lista / botões e conferir título + índice
+7. Avançar pelos controles do YouTube e ver a UI sincronizar
+8. Marcar conclusão, recarregar a página e conferir persistência
+9. Remover uma playlist importada sem apagar as demais
+10. Confirmar que a playlist de programação continua disponível
+11. Testar fallback quando o embed falha (link para o YouTube)
+12. Testar layout em desktop e mobile
 
 ## Licença
 

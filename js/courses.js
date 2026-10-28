@@ -1,124 +1,196 @@
 ﻿/**
- * Skill Tube — Dados do curso
+ * Skill Tube — Dados do curso padrão + utilitários de playlist
  *
- * IDs reais da playlist PLuqN50UwdfI8tvNQTp3q2PuQWImoyi4-q.
- * Títulos oficiais ainda podem ser editados aqui quando disponíveis
- * (YouTube Data API v3). Até lá, usamos rótulos genéricos "Aula N".
+ * A playlist de programação integrada permanece disponível.
+ * Novas playlists são adicionadas pelo usuário e salvas no localStorage (app.js).
+ *
+ * Metadados oficiais extras (títulos de playlists importadas) exigem
+ * YouTube Data API v3 com chave — não usada no frontend por segurança.
  */
 
-const PLAYLIST_ID = 'PLuqN50UwdfI8tvNQTp3q2PuQWImoyi4-q';
-const PLAYLIST_WATCH_URL =
+const DEFAULT_PLAYLIST_ID = 'PLuqN50UwdfI8tvNQTp3q2PuQWImoyi4-q';
+const DEFAULT_PLAYLIST_URL =
   'https://www.youtube.com/watch?v=G5OLtuHulhU&list=PLuqN50UwdfI8tvNQTp3q2PuQWImoyi4-q';
 
-/**
- * @typedef {Object} Lesson
- * @property {string} id
- * @property {number} order
- * @property {string} title
- * @property {string} description
- * @property {string} youtubeVideoId
- * @property {number} playlistIndex
- */
-
-/** @type {Lesson[]} */
-const lessons = [
+/** @type {Array<{id:string,order:number,title:string,description:string,youtubeVideoId:string,playlistIndex:number}>} */
+const defaultLessons = [
   {
     id: 'aula-1',
     order: 1,
     title: 'Aula 1',
-    description:
-      'Primeira videoaula da playlist oficial. Assista pelo player da Skill Tube ou abra no YouTube.',
+    description: 'Primeira videoaula da playlist de programação do Skill Tube.',
     youtubeVideoId: 'G5OLtuHulhU',
-    playlistIndex: 1,
+    playlistIndex: 0,
   },
   {
     id: 'aula-2',
     order: 2,
     title: 'Aula 2',
-    description:
-      'Segunda videoaula da playlist oficial. Use as setas da Skill Tube para navegar entre as aulas.',
+    description: 'Segunda videoaula da playlist de programação.',
     youtubeVideoId: 'gdIpsayKz78',
-    playlistIndex: 2,
+    playlistIndex: 1,
   },
   {
     id: 'aula-3',
     order: 3,
     title: 'Aula 3',
-    description:
-      'Terceira videoaula da playlist oficial. O progresso é marcado manualmente em cada aula.',
+    description: 'Terceira videoaula da playlist de programação.',
     youtubeVideoId: 'RtziM3qy8V4',
-    playlistIndex: 3,
+    playlistIndex: 2,
   },
   {
     id: 'aula-4',
     order: 4,
     title: 'Aula 4',
-    description:
-      'Quarta videoaula da playlist oficial. Favoritos e conclusão ficam salvos neste navegador.',
+    description: 'Quarta videoaula da playlist de programação.',
     youtubeVideoId: 'VBAFQTXljxc',
-    playlistIndex: 4,
+    playlistIndex: 3,
   },
   {
     id: 'aula-5',
     order: 5,
     title: 'Aula 5',
-    description:
-      'Quinta videoaula da playlist oficial. Continue de onde parou pela página inicial.',
+    description: 'Quinta videoaula da playlist de programação.',
     youtubeVideoId: 'NcVeeaLXoAY',
-    playlistIndex: 5,
+    playlistIndex: 4,
   },
   {
     id: 'aula-6',
     order: 6,
     title: 'Aula 6',
-    description:
-      'Sexta videoaula da playlist oficial. Última aula do curso nesta playlist.',
+    description: 'Sexta videoaula da playlist de programação.',
     youtubeVideoId: 'jf16-xhoTZE',
-    playlistIndex: 6,
+    playlistIndex: 5,
   },
 ];
 
-const course = {
-  id: 'curso-playlist-skilltube',
-  title: 'Curso Skill Tube — Playlist Oficial',
-  subtitle: 'Seis videoaulas hospedadas no YouTube',
+const defaultCourse = {
+  playlistId: DEFAULT_PLAYLIST_ID,
+  sourceUrl: DEFAULT_PLAYLIST_URL,
+  title: 'Programação — Playlist oficial',
   description:
-    'Curso baseado na playlist oficial do YouTube. Cada aula usa o ID real do vídeo no player incorporado. Navegue pelas setas da Skill Tube para manter título, indicador e lista lateral sincronizados.',
-  playlistId: PLAYLIST_ID,
-  playlistUrl: PLAYLIST_WATCH_URL,
+    'Curso de programação baseado na playlist oficial do YouTube. Progresso e favoritos ficam neste navegador.',
+  isDefault: true,
   thumbnailVideoId: 'G5OLtuHulhU',
-  totalLessons: lessons.length,
-  lessons,
+  videoCount: defaultLessons.length,
+  lessons: defaultLessons,
+  addedAt: '2026-01-01T00:00:00.000Z',
 };
 
 /**
- * Embed por vídeo individual (sem list=) para evitar as setas nativas
- * da playlist do YouTube, que mudariam o vídeo sem atualizar a UI.
+ * Extrai o ID de playlist de um link do YouTube.
+ * @param {string} input
+ * @returns {{ ok: true, playlistId: string, sourceUrl: string } | { ok: false, error: string }}
  */
-function getEmbedUrl(lesson) {
-  const id = lesson.youtubeVideoId;
-  return `https://www.youtube.com/embed/${id}?rel=0&modestbranding=1&enablejsapi=1`;
+function parsePlaylistUrl(input) {
+  const raw = String(input || '').trim();
+  if (!raw) {
+    return { ok: false, error: 'Cole o link de uma playlist pública do YouTube.' };
+  }
+
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return { ok: false, error: 'Endereço inválido. Use um link completo começando com https://.' };
+  }
+
+  const host = url.hostname.replace(/^www\./, '').toLowerCase();
+  const allowed = ['youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be'];
+  if (!allowed.includes(host)) {
+    return { ok: false, error: 'Aceitamos apenas links do YouTube.' };
+  }
+
+  const listParam = url.searchParams.get('list');
+  if (!listParam || !/^[\w-]+$/.test(listParam)) {
+    return {
+      ok: false,
+      error:
+        'Este link não contém uma playlist. Use um endereço com o parâmetro list= (ex.: /playlist?list=... ou watch?v=...&list=...).',
+    };
+  }
+
+  // Rejeita mixes/rádios (RDxx) com aviso — ainda assim o ID é válido; permitimos, mas
+  // playlists "normais" começam com PL, UU, FL, OL etc.
+  const sourceUrl = `https://www.youtube.com/playlist?list=${listParam}`;
+
+  return { ok: true, playlistId: listParam, sourceUrl };
 }
 
-function getWatchUrl(lesson) {
-  return `https://www.youtube.com/watch?v=${lesson.youtubeVideoId}&list=${PLAYLIST_ID}&index=${lesson.playlistIndex}`;
+function getPlaylistEmbedUrl(playlistId) {
+  return `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(playlistId)}&rel=0&modestbranding=1&enablejsapi=1`;
 }
 
-function getThumbnailUrl(lesson, quality = 'hqdefault') {
-  return `https://i.ytimg.com/vi/${lesson.youtubeVideoId}/${quality}.jpg`;
+function getPlaylistWatchUrl(playlistId, videoId) {
+  if (videoId) {
+    return `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&list=${encodeURIComponent(playlistId)}`;
+  }
+  return `https://www.youtube.com/playlist?list=${encodeURIComponent(playlistId)}`;
 }
 
-function getLessonByVideoId(videoId) {
-  return lessons.find((l) => l.youtubeVideoId === videoId) || null;
+function getThumbnailUrl(videoId, quality = 'hqdefault') {
+  if (!videoId) return null;
+  return `https://i.ytimg.com/vi/${videoId}/${quality}.jpg`;
 }
+
+/**
+ * Monta aulas genéricas a partir dos IDs retornados por player.getPlaylist().
+ * Não inventa títulos oficiais.
+ */
+function buildLessonsFromVideoIds(videoIds, knownLessons) {
+  const knownByVideo = new Map(
+    (knownLessons || [])
+      .filter((l) => l.youtubeVideoId)
+      .map((l) => [l.youtubeVideoId, l])
+  );
+
+  return (videoIds || []).map((videoId, index) => {
+    const known = knownByVideo.get(videoId);
+    return {
+      id: `aula-${index + 1}`,
+      order: index + 1,
+      title: known?.title || `Aula ${index + 1}`,
+      description:
+        known?.description ||
+        'Videoaula da playlist importada. Títulos oficiais exigem YouTube Data API v3.',
+      youtubeVideoId: videoId,
+      playlistIndex: index,
+    };
+  });
+}
+
+/** Compat: mantém nomes antigos usados por versões anteriores. */
+const course = {
+  id: 'curso-playlist-skilltube',
+  title: defaultCourse.title,
+  subtitle: 'Playlist de programação',
+  description: defaultCourse.description,
+  playlistId: DEFAULT_PLAYLIST_ID,
+  playlistUrl: DEFAULT_PLAYLIST_URL,
+  thumbnailVideoId: 'G5OLtuHulhU',
+  totalLessons: defaultLessons.length,
+  lessons: defaultLessons,
+};
 
 window.SkillTubeData = {
+  DEFAULT_PLAYLIST_ID,
+  DEFAULT_PLAYLIST_URL,
+  defaultCourse,
+  defaultLessons,
   course,
-  lessons,
-  PLAYLIST_ID,
-  PLAYLIST_WATCH_URL,
-  getEmbedUrl,
-  getWatchUrl,
+  lessons: defaultLessons,
+  parsePlaylistUrl,
+  getPlaylistEmbedUrl,
+  getPlaylistWatchUrl,
   getThumbnailUrl,
-  getLessonByVideoId,
+  buildLessonsFromVideoIds,
+  getEmbedUrl(lesson) {
+    return `https://www.youtube.com/embed/${lesson.youtubeVideoId}?rel=0&modestbranding=1&enablejsapi=1`;
+  },
+  getWatchUrl(lesson) {
+    return getPlaylistWatchUrl(DEFAULT_PLAYLIST_ID, lesson.youtubeVideoId);
+  },
+  getLessonByVideoId(videoId) {
+    return defaultLessons.find((l) => l.youtubeVideoId === videoId) || null;
+  },
 };

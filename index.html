@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Skill Tube — plataforma educacional com videoaulas do YouTube, progresso e favoritos."
+      content="Skill Tube — assista playlists do YouTube, importe cursos e acompanhe seu progresso."
     />
     <title>Skill Tube — Plataforma Educacional</title>
     <link rel="stylesheet" href="css/style.css" />
@@ -42,7 +42,13 @@
             <button type="button" class="nav-link is-active" data-nav="home">Início</button>
           </li>
           <li>
-            <button type="button" class="nav-link" data-nav="course">Meu curso</button>
+            <button type="button" class="nav-link" data-nav="library">Minhas playlists</button>
+          </li>
+          <li>
+            <button type="button" class="nav-link" data-nav="import">Importar</button>
+          </li>
+          <li>
+            <button type="button" class="nav-link" data-nav="course">Curso</button>
           </li>
           <li>
             <button type="button" class="nav-link" data-nav="favorites">Favoritos</button>
@@ -57,7 +63,7 @@
                 <path d="M20 20l-3.5-3.5" />
               </svg>
             </span>
-            <label class="sr-only" for="search-input">Pesquisar aulas</label>
+            <label class="sr-only" for="search-input">Pesquisar aulas do curso ativo</label>
             <input
               id="search-input"
               type="search"
@@ -76,7 +82,7 @@
             <span>Favoritos</span>
           </button>
 
-          <div class="header-progress" aria-label="Progresso do curso">
+          <div class="header-progress" aria-label="Progresso do curso ativo">
             <div class="header-progress__bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
               <div class="header-progress__fill" id="header-progress-fill"></div>
             </div>
@@ -92,21 +98,22 @@
         <div class="hero">
           <article class="welcome-card">
             <p class="eyebrow">Bem-vindo ao Skill Tube</p>
-            <h1 id="home-title">Estude no seu ritmo com videoaulas do YouTube</h1>
+            <h1 id="home-title">Estude com qualquer playlist pública do YouTube</h1>
             <p>
-              Acompanhe o curso da playlist oficial, marque o progresso, salve favoritos e continue
-              de onde parou — tudo salvo neste navegador.
+              Importe playlists, acompanhe o progresso e continue de onde parou — tudo salvo neste
+              navegador. A playlist de programação oficial já está na sua biblioteca.
             </p>
             <div class="welcome-actions">
               <button type="button" class="btn btn--primary" id="btn-continue">Continuar estudando</button>
+              <button type="button" class="btn btn--secondary" id="btn-go-import">Importar playlist</button>
               <button type="button" class="btn btn--secondary" id="btn-open-course">Abrir curso</button>
             </div>
             <div class="progress-panel">
               <div class="progress-panel__top">
                 <strong id="home-progress-percent">0%</strong>
-                <span id="home-progress-text">0 de 6 aulas</span>
+                <span id="home-progress-text">0 de 0 aulas</span>
               </div>
-              <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-label="Conclusão do curso">
+              <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-label="Conclusão do curso ativo">
                 <div class="progress-bar__fill" id="home-progress-fill"></div>
               </div>
             </div>
@@ -116,7 +123,7 @@
             <div class="featured-card__media">
               <img
                 src="https://i.ytimg.com/vi/G5OLtuHulhU/hqdefault.jpg"
-                alt="Capa do curso na playlist oficial do YouTube"
+                alt="Capa da playlist de programação"
                 width="480"
                 height="360"
               />
@@ -124,7 +131,7 @@
             </div>
             <div class="featured-card__body">
               <p class="eyebrow">Curso oficial</p>
-              <h2>Curso Skill Tube — Playlist Oficial</h2>
+              <h2>Programação — Playlist oficial</h2>
               <p>Seis videoaulas incorporadas via player oficial do YouTube.</p>
               <a
                 class="btn btn--secondary btn--sm"
@@ -132,17 +139,24 @@
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                Ver playlist no YouTube
+                Ver no YouTube
               </a>
             </div>
           </article>
         </div>
 
-        <section class="section" aria-labelledby="meu-curso-title">
-          <h2 class="section-title" id="meu-curso-title">Meu curso</h2>
+        <section class="section" aria-labelledby="home-library-title">
+          <h2 class="section-title" id="home-library-title">Minhas playlists</h2>
           <p class="section-lead">
-            Selecione uma das 6 videoaulas. Os títulos genéricos podem ser atualizados em
-            <code>js/courses.js</code> quando os metadados oficiais estiverem disponíveis.
+            Cursos salvos neste navegador. Importe novas playlists ou abra a de programação.
+          </p>
+          <div class="cards-grid" id="home-library-grid"></div>
+        </section>
+
+        <section class="section" aria-labelledby="meu-curso-title">
+          <h2 class="section-title" id="meu-curso-title">Aulas do curso ativo</h2>
+          <p class="section-lead">
+            Curso atual: <strong id="active-course-label">Programação — Playlist oficial</strong>
           </p>
 
           <p class="search-hint" id="search-results" hidden>Resultados da pesquisa</p>
@@ -155,24 +169,120 @@
 
         <section class="section" id="continue-section" aria-labelledby="continue-title">
           <h2 class="section-title" id="continue-title">Continue de onde parou</h2>
-          <p class="section-lead">Retome a última aula acessada neste dispositivo.</p>
+          <p class="section-lead">Retome a última aula do curso ativo neste dispositivo.</p>
           <div class="continue-card" id="continue-card"></div>
         </section>
       </section>
 
+      <!-- LIBRARY -->
+      <section class="view" id="view-library" hidden aria-labelledby="library-title">
+        <div class="section-head-row">
+          <div>
+            <h2 class="section-title" id="library-title">Minhas playlists</h2>
+            <p class="section-lead">
+              Abra, continue ou remova playlists. Os dados ficam apenas neste navegador (localStorage).
+            </p>
+          </div>
+          <button type="button" class="btn btn--primary" data-nav="import">Importar playlist</button>
+        </div>
+        <div class="empty-state" id="library-empty" hidden role="status">
+          Nenhuma playlist na biblioteca. Importe um link público do YouTube para começar.
+        </div>
+        <div class="cards-grid" id="library-grid"></div>
+      </section>
+
+      <!-- IMPORT -->
+      <section class="view" id="view-import" hidden aria-labelledby="import-title-heading">
+        <div class="import-layout">
+          <article class="import-card">
+            <div class="import-card__icon" aria-hidden="true">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M4 7h16M4 12h10M4 17h7" />
+                <path d="M16 14l5 3-5 3v-6z" fill="currentColor" stroke="none" />
+              </svg>
+            </div>
+            <p class="eyebrow">Importar curso</p>
+            <h2 class="section-title" id="import-title-heading">Adicionar playlist do YouTube</h2>
+            <p class="section-lead">
+              Cole o link de uma <strong>playlist pública</strong>. O Skill Tube extrai o parâmetro
+              <code>list</code> e reproduz com o player oficial. Não é necessário alterar arquivos do projeto.
+            </p>
+
+            <form id="import-form" class="import-form" novalidate>
+              <div class="form-field">
+                <label for="import-url">Link da playlist</label>
+                <input
+                  id="import-url"
+                  name="playlistUrl"
+                  type="url"
+                  inputmode="url"
+                  placeholder="https://www.youtube.com/playlist?list=..."
+                  autocomplete="off"
+                  required
+                  aria-describedby="import-hint"
+                />
+                <p class="form-hint" id="import-hint">
+                  Formatos aceitos: /playlist?list=…, watch?v=…&amp;list=… ou embed/videoseries?list=…
+                </p>
+              </div>
+
+              <div class="form-field">
+                <label for="import-title">Nome do curso <span class="optional">(opcional)</span></label>
+                <input
+                  id="import-title"
+                  name="courseTitle"
+                  type="text"
+                  maxlength="120"
+                  placeholder="Ex.: JavaScript do zero"
+                  autocomplete="off"
+                />
+              </div>
+
+              <div class="import-form__actions">
+                <button type="submit" class="btn btn--primary" id="import-submit">Adicionar playlist</button>
+                <button type="button" class="btn btn--secondary" data-nav="library">Ver biblioteca</button>
+              </div>
+
+              <div class="import-loading" id="import-loading" hidden role="status" aria-live="polite">
+                <span class="spinner" aria-hidden="true"></span>
+                Processando playlist…
+              </div>
+
+              <p class="form-status" id="import-status" hidden role="alert"></p>
+            </form>
+          </article>
+
+          <aside class="import-tips">
+            <h3>Boas práticas</h3>
+            <ul>
+              <li>Use playlists públicas. Privadas ou removidas não carregam no player.</li>
+              <li>Links de vídeo sem <code>list=</code> são rejeitados.</li>
+              <li>Títulos oficiais das aulas importadas podem aparecer como “Aula N” até o player sincronizar.</li>
+              <li>Metadados completos exigem YouTube Data API v3 (chave no backend — não no frontend).</li>
+              <li>Não há sincronização entre dispositivos: o localStorage é local.</li>
+            </ul>
+          </aside>
+        </div>
+      </section>
+
       <!-- COURSE -->
       <section class="view" id="view-course" hidden aria-labelledby="course-title">
+        <div class="course-toolbar">
+          <button type="button" class="btn btn--secondary btn--sm" id="btn-back-library">
+            ← Voltar à biblioteca
+          </button>
+        </div>
         <div class="course-layout">
           <div class="course-main">
             <div class="course-intro">
               <p class="eyebrow">Área do curso</p>
-              <h1 id="course-title">Curso Skill Tube — Playlist Oficial</h1>
-              <p>
-                Assista às aulas pelo player oficial do YouTube. O progresso é atualizado quando você
-                marca uma aula como concluída — não há detecção automática de visualização completa.
+              <h1 id="course-title">Curso</h1>
+              <p id="course-description">
+                Assista pelo player oficial. Marque aulas como concluídas manualmente — não há detecção
+                automática de visualização completa.
               </p>
               <div class="course-progress-row">
-                <span id="course-progress-text">0 de 6 aulas · 0%</span>
+                <span id="course-progress-text">0 de 0 aulas · 0%</span>
                 <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-label="Progresso do curso">
                   <div class="progress-bar__fill" id="course-progress-fill"></div>
                 </div>
@@ -182,33 +292,16 @@
             <div class="player-wrap" id="player-wrap">
               <div class="player-ratio">
                 <div id="player-host">
-                  <iframe
-                    id="player-frame"
-                    title="Player de videoaula do YouTube"
-                    src="https://www.youtube.com/embed/G5OLtuHulhU?rel=0&amp;modestbranding=1&amp;enablejsapi=1"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    allowfullscreen
-                    referrerpolicy="strict-origin-when-cross-origin"
-                  ></iframe>
+                  <div id="player-frame"></div>
                 </div>
               </div>
 
-              <button
-                type="button"
-                class="player-nav player-nav--prev"
-                id="player-prev"
-                aria-label="Aula anterior"
-              >
+              <button type="button" class="player-nav player-nav--prev" id="player-prev" aria-label="Aula anterior">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
                   <path d="M15 18l-6-6 6-6" />
                 </svg>
               </button>
-              <button
-                type="button"
-                class="player-nav player-nav--next"
-                id="player-next"
-                aria-label="Próxima aula"
-              >
+              <button type="button" class="player-nav player-nav--next" id="player-next" aria-label="Próxima aula">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
                   <path d="M9 18l6-6-6-6" />
                 </svg>
@@ -216,11 +309,11 @@
 
               <div class="player-fallback" id="player-fallback" hidden role="alert">
                 <div>
-                  <p>Não foi possível carregar o vídeo incorporado.</p>
+                  <p>Não foi possível carregar o vídeo incorporado (indisponível ou sem permissão de embed).</p>
                   <p>
                     <a
                       id="player-fallback-link"
-                      href="https://www.youtube.com/watch?v=G5OLtuHulhU&amp;list=PLuqN50UwdfI8tvNQTp3q2PuQWImoyi4-q"
+                      href="https://www.youtube.com/playlist?list=PLuqN50UwdfI8tvNQTp3q2PuQWImoyi4-q"
                       target="_blank"
                       rel="noopener noreferrer"
                     >
@@ -234,11 +327,9 @@
             <div class="lesson-details">
               <div class="lesson-details__top">
                 <h2 id="lesson-title">Aula 1</h2>
-                <span class="lesson-indicator" id="lesson-indicator">Aula 1 de 6</span>
+                <span class="lesson-indicator" id="lesson-indicator">Aula 1</span>
               </div>
-              <p id="lesson-description">
-                Primeira videoaula da playlist. Abra o player para assistir ao conteúdo oficial no YouTube.
-              </p>
+              <p id="lesson-description">Selecione uma aula para começar.</p>
               <div class="lesson-actions">
                 <button type="button" class="btn btn--secondary" id="btn-prev">Aula anterior</button>
                 <button type="button" class="btn btn--secondary" id="btn-next">Próxima aula</button>
@@ -263,10 +354,10 @@
       <section class="view" id="view-favorites" hidden aria-labelledby="favorites-title">
         <h2 class="section-title" id="favorites-title">Favoritos</h2>
         <p class="section-lead">
-          Aulas que você marcou com estrela. Os favoritos ficam salvos no localStorage deste navegador.
+          Aulas favoritas de todos os cursos da biblioteca. Persistidas no localStorage deste navegador.
         </p>
         <div class="empty-state" id="favorites-empty" role="status">
-          Você ainda não favoritou nenhuma aula. Abra o curso e toque em Favoritar.
+          Você ainda não favoritou nenhuma aula.
         </div>
         <div class="cards-grid" id="favorites-list"></div>
       </section>
@@ -280,7 +371,7 @@
           target="_blank"
           rel="noopener noreferrer"
         >
-          Playlist no YouTube
+          Playlist de programação
         </a>
       </p>
     </footer>

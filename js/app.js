@@ -1,41 +1,48 @@
 ﻿/**
- * Skill Tube — Lógica da aplicação
- * Progresso e favoritos em localStorage.
- * Navegação central: selecionarAula(indice).
+ * Skill Tube — Biblioteca de playlists, importação e player sincronizado
  */
 
 (() => {
   'use strict';
 
-  const STORAGE_KEYS = {
+  const STORAGE = {
+    library: 'skilltube_library',
+    progress: 'skilltube_progress',
+    active: 'skilltube_active_playlist',
+    // legado (migração)
     completed: 'skilltube_completed',
     favorites: 'skilltube_favorites',
     lastLesson: 'skilltube_last_lesson',
   };
 
+  const data = window.SkillTubeData;
   const {
-    course,
-    getEmbedUrl,
-    getWatchUrl,
+    defaultCourse,
+    parsePlaylistUrl,
+    getPlaylistEmbedUrl,
+    getPlaylistWatchUrl,
     getThumbnailUrl,
-    getLessonByVideoId,
-  } = window.SkillTubeData;
+    buildLessonsFromVideoIds,
+  } = data;
 
-  /** @type {string[]} */
-  let completedIds = loadJson(STORAGE_KEYS.completed, []);
-  /** @type {string[]} */
-  let favoriteIds = loadJson(STORAGE_KEYS.favorites, []);
-  /** @type {string|null} */
-  let currentLessonId = loadJson(STORAGE_KEYS.lastLesson, course.lessons[0].id);
+  /** @type {Array<Object>} */
+  let library = [];
+  /** @type {Record<string, { completed: number[], favorites: number[], lastIndex: number }>} */
+  let progressMap = {};
+  /** @type {Object|null} */
+  let activeCourse = null;
+  /** @type {Array<Object>} */
+  let activeLessons = [];
+  let currentIndex = 0;
   let currentView = 'home';
   let searchQuery = '';
 
-  /** @type {YT.Player|null} */
   let ytPlayer = null;
   let ytApiRequested = false;
   let ytApiReady = false;
-  let loadedVideoId = null;
+  let loadedPlaylistId = null;
   let syncingFromPlayer = false;
+  let navigatingProgrammatically = false;
 
   const els = {};
 
@@ -43,11 +50,174 @@
 
   function init() {
     cacheElements();
+    loadState();
     bindEvents();
     requestYouTubeApi();
     renderAll();
     showView('home');
   }
+
+  /* ---------- Estado / storage ---------- */
+
+  function loadJson(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw == null) return fallback;
+      return JSON.parse(raw);
+    } catch {
+      return fallback;
+    }
+  }
+
+  function saveJson(key, value) {
+    localStorage.setItem(key, JSON.stringify(value));
+  }
+
+  function loadState() {
+    library = loadJson(STORAGE.library, []);
+    progressMap = loadJson(STORAGE.progress, {});
+
+    ensureDefaultInLibrary();
+    migrateLegacyProgress();
+
+    const activeId = loadJson(STORAGE.active, defaultCourse.playlistId);
+    activeCourse = library.find((c) => c.playlistId === activeId) || library[0];
+    resolveActiveLessons();
+    const prog = getProgressRecord(activeCourse.playlistId);
+    currentIndex = clampIndex(prog.lastIndex ?? 0);
+  }
+
+  function ensureDefaultInLibrary() {
+    const exists = library.some((c) => c.playlistId === defaultCourse.playlistId);
+    if (!exists) {
+      library.unshift(serializeCourse(defaultCourse));
+    } else {
+      library = library.map((c) =>
+        c.playlistId === defaultCourse.playlistId
+          ? {
+              ...c,
+              title: c.title || defaultCourse.title,
+              isDefault: true,
+              lessons: defaultCourse.lessons,
+              videoCount: defaultCourse.videoCount,
+              thumbnailVideoId: defaultCourse.thumbnailVideoId,
+              description: defaultCourse.description,
+            }
+          : c
+      );
+    }
+    saveJson(STORAGE.library, library);
+  }
+
+  function serializeCourse(course) {
+    return {
+      playlistId: course.playlistId,
+      sourceUrl: course.sourceUrl,
+      title: course.title,
+      description: course.description || '',
+      isDefault: !!course.isDefault,
+      thumbnailVideoId: course.thumbnailVideoId || null,
+      videoCount: course.videoCount ?? (course.lessons ? course.lessons.length : null),
+      lessons: course.lessons || null,
+      addedAt: course.addedAt || new Date().toISOString(),
+    };
+  }
+
+  function migrateLegacyProgress() {
+    const pid = defaultCourse.playlistId;
+    if (progressMap[pid]) return;
+
+    const oldCompleted = loadJson(STORAGE.completed, null);
+    const oldFavorites = loadJson(STORAGE.favorites, null);
+    const oldLast = loadJson(STORAGE.lastLesson, null);
+
+    if (!oldCompleted && !oldFavorites && !oldLast) {
+      progressMap[pid] = { completed: [], favorites: [], lastIndex: 0 };
+      saveJson(STORAGE.progress, progressMap);
+      return;
+    }
+
+    const toIndex = (lessonId) => {
+      const i = defaultCourse.lessons.findIndex((l) => l.id === lessonId);
+      return i;
+    };
+
+    const completed = Array.isArray(oldCompleted)
+      ? oldCompleted.map(toIndex).filter((i) => i >= 0)
+      : [];
+    const favorites = Array.isArray(oldFavorites)
+      ? oldFavorites.map(toIndex).filter((i) => i >= 0)
+      : [];
+    let lastIndex = 0;
+    if (typeof oldLast === 'string') {
+      const i = toIndex(oldLast);
+      if (i >= 0) lastIndex = i;
+    }
+
+    progressMap[pid] = { completed, favorites, lastIndex };
+    saveJson(STORAGE.progress, progressMap);
+  }
+
+  function getProgressRecord(playlistId) {
+    if (!progressMap[playlistId]) {
+      progressMap[playlistId] = { completed: [], favorites: [], lastIndex: 0 };
+    }
+    return progressMap[playlistId];
+  }
+
+  function persistProgress() {
+    if (!activeCourse) return;
+    const rec = getProgressRecord(activeCourse.playlistId);
+    rec.lastIndex = currentIndex;
+    progressMap[activeCourse.playlistId] = rec;
+    saveJson(STORAGE.progress, progressMap);
+    saveJson(STORAGE.active, activeCourse.playlistId);
+    saveJson(STORAGE.library, library);
+  }
+
+  function resolveActiveLessons() {
+    if (!activeCourse) {
+      activeLessons = [];
+      return;
+    }
+    if (activeCourse.lessons && activeCourse.lessons.length) {
+      activeLessons = activeCourse.lessons;
+      return;
+    }
+    if (activeCourse.videoCount && activeCourse.videoCount > 0) {
+      activeLessons = Array.from({ length: activeCourse.videoCount }, (_, index) => ({
+        id: `aula-${index + 1}`,
+        order: index + 1,
+        title: `Aula ${index + 1}`,
+        description: 'Videoaula da playlist. Detalhes oficiais podem exigir YouTube Data API v3.',
+        youtubeVideoId: null,
+        playlistIndex: index,
+      }));
+      return;
+    }
+    activeLessons = [];
+  }
+
+  function clampIndex(i) {
+    if (!activeLessons.length) return Math.max(0, i || 0);
+    return Math.min(Math.max(0, i), activeLessons.length - 1);
+  }
+
+  function currentLesson() {
+    if (!activeLessons.length) {
+      return {
+        id: 'aula-1',
+        order: currentIndex + 1,
+        title: `Aula ${currentIndex + 1}`,
+        description: 'Reproduzindo via playlist do YouTube.',
+        youtubeVideoId: null,
+        playlistIndex: currentIndex,
+      };
+    }
+    return activeLessons[clampIndex(currentIndex)];
+  }
+
+  /* ---------- DOM ---------- */
 
   function cacheElements() {
     els.navToggle = document.getElementById('nav-toggle');
@@ -58,9 +228,14 @@
     els.headerProgressText = document.getElementById('header-progress-text');
     els.views = {
       home: document.getElementById('view-home'),
+      library: document.getElementById('view-library'),
+      import: document.getElementById('view-import'),
       course: document.getElementById('view-course'),
       favorites: document.getElementById('view-favorites'),
     };
+    els.libraryGrid = document.getElementById('library-grid');
+    els.libraryEmpty = document.getElementById('library-empty');
+    els.homeLibraryGrid = document.getElementById('home-library-grid');
     els.lessonCards = document.getElementById('lesson-cards');
     els.searchResults = document.getElementById('search-results');
     els.searchEmpty = document.getElementById('search-empty');
@@ -71,13 +246,21 @@
     els.homeProgressPercent = document.getElementById('home-progress-percent');
     els.btnContinue = document.getElementById('btn-continue');
     els.btnOpenCourse = document.getElementById('btn-open-course');
+    els.btnImportNav = document.getElementById('btn-go-import');
+    els.importForm = document.getElementById('import-form');
+    els.importUrl = document.getElementById('import-url');
+    els.importTitle = document.getElementById('import-title');
+    els.importSubmit = document.getElementById('import-submit');
+    els.importStatus = document.getElementById('import-status');
+    els.importLoading = document.getElementById('import-loading');
     els.lessonList = document.getElementById('lesson-list');
     els.playerHost = document.getElementById('player-host');
-    els.playerFrame = document.getElementById('player-frame');
     els.playerFallback = document.getElementById('player-fallback');
     els.playerFallbackLink = document.getElementById('player-fallback-link');
     els.playerPrev = document.getElementById('player-prev');
     els.playerNext = document.getElementById('player-next');
+    els.courseTitle = document.getElementById('course-title');
+    els.courseDescription = document.getElementById('course-description');
     els.lessonTitle = document.getElementById('lesson-title');
     els.lessonDescription = document.getElementById('lesson-description');
     els.lessonIndicator = document.getElementById('lesson-indicator');
@@ -87,9 +270,11 @@
     els.btnNext = document.getElementById('btn-next');
     els.btnComplete = document.getElementById('btn-complete');
     els.btnFavorite = document.getElementById('btn-favorite');
+    els.btnBackLibrary = document.getElementById('btn-back-library');
     els.favoritesList = document.getElementById('favorites-list');
     els.favoritesEmpty = document.getElementById('favorites-empty');
     els.toast = document.getElementById('toast');
+    els.activeCourseLabel = document.getElementById('active-course-label');
   }
 
   function bindEvents() {
@@ -101,14 +286,16 @@
     document.querySelectorAll('[data-nav]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const view = btn.getAttribute('data-nav');
-        if (view === 'course') openCourse();
+        if (view === 'course') openActiveCourse();
         else showView(view);
         closeMobileNav();
       });
     });
 
-    els.btnContinue?.addEventListener('click', () => openCourse(currentLessonId));
-    els.btnOpenCourse?.addEventListener('click', () => openCourse());
+    els.btnContinue?.addEventListener('click', () => openActiveCourse());
+    els.btnOpenCourse?.addEventListener('click', () => openActiveCourse());
+    els.btnImportNav?.addEventListener('click', () => showView('import'));
+    els.btnBackLibrary?.addEventListener('click', () => showView('library'));
 
     els.searchInput?.addEventListener('input', (e) => {
       searchQuery = e.target.value.trim().toLowerCase();
@@ -125,7 +312,6 @@
       renderHomeLessons();
     });
 
-    // Todos os controles usam a mesma navegação central
     els.btnPrev?.addEventListener('click', () => navegarAula(-1));
     els.btnNext?.addEventListener('click', () => navegarAula(1));
     els.playerPrev?.addEventListener('click', () => navegarAula(-1));
@@ -133,7 +319,7 @@
     els.btnComplete?.addEventListener('click', toggleComplete);
     els.btnFavorite?.addEventListener('click', toggleFavorite);
 
-    els.playerFrame?.addEventListener('error', showPlayerFallback);
+    els.importForm?.addEventListener('submit', onImportSubmit);
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') closeMobileNav();
@@ -145,7 +331,126 @@
     els.navToggle?.setAttribute('aria-expanded', 'false');
   }
 
-  /* ---------- YouTube IFrame API ---------- */
+  /* ---------- Importar playlist ---------- */
+
+  function onImportSubmit(e) {
+    e.preventDefault();
+    clearImportStatus();
+
+    const urlValue = els.importUrl?.value || '';
+    const customTitle = (els.importTitle?.value || '').trim();
+    const parsed = parsePlaylistUrl(urlValue);
+
+    if (!parsed.ok) {
+      setImportStatus(parsed.error, 'error');
+      return;
+    }
+
+    if (library.some((c) => c.playlistId === parsed.playlistId)) {
+      setImportStatus('Esta playlist já está na sua biblioteca. Abrindo o curso…', 'success');
+      openCourseByPlaylistId(parsed.playlistId);
+      return;
+    }
+
+    setImportLoading(true);
+    setImportStatus('Validando e adicionando playlist…', 'info');
+
+    // Processamento local (sem scraping / sem chave de API)
+    window.setTimeout(() => {
+      try {
+        const entry = {
+          playlistId: parsed.playlistId,
+          sourceUrl: parsed.sourceUrl,
+          title: customTitle || `Playlist ${parsed.playlistId.slice(0, 8)}…`,
+          description:
+            'Playlist importada do YouTube. Títulos oficiais das aulas podem aparecer como “Aula N” até a sincronização com o player.',
+          isDefault: false,
+          thumbnailVideoId: null,
+          videoCount: null,
+          lessons: null,
+          addedAt: new Date().toISOString(),
+        };
+
+        library.push(entry);
+        progressMap[entry.playlistId] = { completed: [], favorites: [], lastIndex: 0 };
+        saveJson(STORAGE.library, library);
+        saveJson(STORAGE.progress, progressMap);
+
+        setImportLoading(false);
+        setImportStatus('Playlist adicionada com sucesso!', 'success');
+        if (els.importUrl) els.importUrl.value = '';
+        if (els.importTitle) els.importTitle.value = '';
+        showToast('Playlist adicionada à biblioteca');
+        openCourseByPlaylistId(entry.playlistId);
+      } catch (err) {
+        setImportLoading(false);
+        setImportStatus('Não foi possível adicionar a playlist. Tente novamente.', 'error');
+      }
+    }, 450);
+  }
+
+  function setImportLoading(on) {
+    if (els.importLoading) els.importLoading.hidden = !on;
+    if (els.importSubmit) els.importSubmit.disabled = on;
+  }
+
+  function setImportStatus(message, type) {
+    if (!els.importStatus) return;
+    els.importStatus.hidden = !message;
+    els.importStatus.textContent = message || '';
+    els.importStatus.className = `form-status form-status--${type || 'info'}`;
+  }
+
+  function clearImportStatus() {
+    setImportStatus('', 'info');
+    if (els.importStatus) els.importStatus.hidden = true;
+  }
+
+  /* ---------- Curso ativo ---------- */
+
+  function openCourseByPlaylistId(playlistId) {
+    const course = library.find((c) => c.playlistId === playlistId);
+    if (!course) return;
+    activeCourse = course;
+    resolveActiveLessons();
+    const prog = getProgressRecord(playlistId);
+    currentIndex = clampIndex(prog.lastIndex ?? 0);
+    persistProgress();
+    destruirPlayer();
+    showView('course');
+  }
+
+  function openActiveCourse() {
+    if (!activeCourse) activeCourse = library[0];
+    openCourseByPlaylistId(activeCourse.playlistId);
+  }
+
+  function removeCourse(playlistId) {
+    const item = library.find((c) => c.playlistId === playlistId);
+    if (!item) return;
+    if (item.isDefault) {
+      showToast('A playlist oficial de programação não pode ser removida');
+      return;
+    }
+    library = library.filter((c) => c.playlistId !== playlistId);
+    delete progressMap[playlistId];
+    saveJson(STORAGE.library, library);
+    saveJson(STORAGE.progress, progressMap);
+
+    if (activeCourse?.playlistId === playlistId) {
+      activeCourse = library[0];
+      resolveActiveLessons();
+      currentIndex = 0;
+      persistProgress();
+      destruirPlayer();
+    }
+
+    showToast('Playlist removida da biblioteca');
+    renderLibrary();
+    renderHome();
+  }
+
+  /* ---------- YouTube API ---------- */
 
   function requestYouTubeApi() {
     if (ytApiRequested) return;
@@ -160,9 +465,7 @@
     window.onYouTubeIframeAPIReady = () => {
       if (typeof previous === 'function') previous();
       ytApiReady = true;
-      if (currentView === 'course') {
-        carregarPlayer(getLesson(currentLessonId));
-      }
+      if (currentView === 'course') ensurePlaylistPlayer();
     };
 
     const tag = document.createElement('script');
@@ -180,230 +483,323 @@
       }
     }
     ytPlayer = null;
-    loadedVideoId = null;
+    loadedPlaylistId = null;
 
-    if (els.playerHost && !document.getElementById('player-frame')) {
-      els.playerHost.innerHTML = `
-        <iframe
-          id="player-frame"
-          title="Player de videoaula do YouTube"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-          allowfullscreen
-          referrerpolicy="strict-origin-when-cross-origin"
-        ></iframe>
-      `;
-      els.playerFrame = document.getElementById('player-frame');
+    if (els.playerHost) {
+      els.playerHost.innerHTML = '<div id="player-frame"></div>';
     }
   }
 
-  function carregarPlayer(lesson) {
+  function ensurePlaylistPlayer() {
+    if (!activeCourse) return;
     hidePlayerFallback();
 
-    if (els.playerFallbackLink) {
-      els.playerFallbackLink.href = getWatchUrl(lesson);
-    }
-
-    if (!lesson?.youtubeVideoId) {
-      showPlayerFallback();
-      return;
-    }
+    const watchUrl = getPlaylistWatchUrl(activeCourse.playlistId);
+    if (els.playerFallbackLink) els.playerFallbackLink.href = watchUrl;
 
     if (ytApiReady && window.YT && window.YT.Player) {
-      if (!ytPlayer) {
-        // Garante um elemento alvo limpo para a API
-        if (!document.getElementById('player-frame') && els.playerHost) {
-          els.playerHost.innerHTML = '<div id="player-frame"></div>';
+      if (ytPlayer && loadedPlaylistId === activeCourse.playlistId) {
+        try {
+          const idx = ytPlayer.getPlaylistIndex?.();
+          if (typeof idx === 'number' && idx !== currentIndex) {
+            navigatingProgrammatically = true;
+            ytPlayer.playVideoAt(currentIndex);
+            window.setTimeout(() => {
+              navigatingProgrammatically = false;
+            }, 400);
+          }
+        } catch {
+          /* ignore */
         }
-
-        ytPlayer = new window.YT.Player('player-frame', {
-          width: '100%',
-          height: '100%',
-          videoId: lesson.youtubeVideoId,
-          playerVars: {
-            rel: 0,
-            modestbranding: 1,
-            playsinline: 1,
-          },
-          events: {
-            onReady: () => {
-              loadedVideoId = lesson.youtubeVideoId;
-              hidePlayerFallback();
-            },
-            onError: () => showPlayerFallback(),
-            onStateChange: onPlayerStateChange,
-          },
-        });
-        loadedVideoId = lesson.youtubeVideoId;
         return;
       }
 
-      if (loadedVideoId === lesson.youtubeVideoId) return;
+      destruirPlayer();
+      if (els.playerHost) els.playerHost.innerHTML = '<div id="player-frame"></div>';
 
-      try {
-        ytPlayer.cueVideoById(lesson.youtubeVideoId);
-        loadedVideoId = lesson.youtubeVideoId;
-      } catch {
-        destruirPlayer();
-        carregarPlayer(lesson);
-      }
+      ytPlayer = new window.YT.Player('player-frame', {
+        width: '100%',
+        height: '100%',
+        playerVars: {
+          listType: 'playlist',
+          list: activeCourse.playlistId,
+          index: currentIndex,
+          rel: 0,
+          modestbranding: 1,
+          playsinline: 1,
+        },
+        events: {
+          onReady: onPlayerReady,
+          onError: () => showPlayerFallback(),
+          onStateChange: onPlayerStateChange,
+        },
+      });
+      loadedPlaylistId = activeCourse.playlistId;
       return;
     }
 
-    // Fallback sem API: iframe direto com ID real
-    if (!els.playerFrame && els.playerHost) {
-      els.playerHost.innerHTML = `
-        <iframe
-          id="player-frame"
-          title="Player: ${escapeHtml(lesson.title)}"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-          allowfullscreen
-          referrerpolicy="strict-origin-when-cross-origin"
-        ></iframe>
-      `;
-      els.playerFrame = document.getElementById('player-frame');
+    // Fallback sem API
+    if (els.playerHost) {
+      const src = getPlaylistEmbedUrl(activeCourse.playlistId);
+      els.playerHost.innerHTML = '';
+      const iframe = document.createElement('iframe');
+      iframe.id = 'player-frame';
+      iframe.title = `Player: ${activeCourse.title}`;
+      iframe.allow =
+        'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+      iframe.allowFullscreen = true;
+      iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+      iframe.src = src;
+      els.playerHost.appendChild(iframe);
+    }
+  }
+
+  function onPlayerReady(event) {
+    hidePlayerFallback();
+    syncLessonsFromPlayer(event.target);
+    try {
+      if (currentIndex > 0) event.target.playVideoAt(currentIndex);
+    } catch {
+      /* ignore */
+    }
+    atualizarInterfaceAula(currentIndex);
+  }
+
+  function syncLessonsFromPlayer(player) {
+    if (!player || typeof player.getPlaylist !== 'function') return;
+    let videoIds = null;
+    try {
+      videoIds = player.getPlaylist();
+    } catch {
+      videoIds = null;
+    }
+    if (!Array.isArray(videoIds) || !videoIds.length) return;
+
+    const known = activeCourse.isDefault ? defaultCourse.lessons : activeCourse.lessons;
+    const lessons = buildLessonsFromVideoIds(videoIds, known);
+    activeLessons = lessons;
+    activeCourse.lessons = lessons;
+    activeCourse.videoCount = lessons.length;
+    if (!activeCourse.thumbnailVideoId && lessons[0]?.youtubeVideoId) {
+      activeCourse.thumbnailVideoId = lessons[0].youtubeVideoId;
     }
 
-    if (!els.playerFrame) return;
-    if (loadedVideoId === lesson.youtubeVideoId && els.playerFrame.src.includes(lesson.youtubeVideoId)) {
-      return;
-    }
-
-    els.playerFrame.title = `Player: ${lesson.title}`;
-    els.playerFrame.src = getEmbedUrl(lesson);
-    loadedVideoId = lesson.youtubeVideoId;
+    library = library.map((c) =>
+      c.playlistId === activeCourse.playlistId ? { ...activeCourse } : c
+    );
+    saveJson(STORAGE.library, library);
+    renderLessonList();
+    updateProgressUI();
   }
 
   function onPlayerStateChange(event) {
-    if (syncingFromPlayer) return;
-    if (!ytPlayer || typeof ytPlayer.getVideoData !== 'function') return;
+    if (navigatingProgrammatically || syncingFromPlayer) return;
+    if (!ytPlayer) return;
 
     try {
-      const data = ytPlayer.getVideoData();
-      const videoId = data && data.video_id;
-      if (!videoId) return;
-
-      const lesson = getLessonByVideoId(videoId);
-      if (!lesson) return;
-      if (lesson.id === currentLessonId) {
-        loadedVideoId = videoId;
-        return;
+      syncLessonsFromPlayer(ytPlayer);
+      const idx =
+        typeof ytPlayer.getPlaylistIndex === 'function' ? ytPlayer.getPlaylistIndex() : -1;
+      if (typeof idx === 'number' && idx >= 0 && idx !== currentIndex) {
+        syncingFromPlayer = true;
+        selecionarAula(idx, { skipPlayer: true, silent: true });
+        syncingFromPlayer = false;
       }
 
-      // Se o vídeo no player mudou (ex.: controle nativo), sincroniza a UI
-      syncingFromPlayer = true;
-      selecionarAula(lesson.order - 1, { skipPlayer: true, silent: true });
-      loadedVideoId = videoId;
-      syncingFromPlayer = false;
+      // Atualiza título com o nome do vídeo quando a API expõe
+      const videoData = ytPlayer.getVideoData?.();
+      if (videoData?.title && els.lessonTitle && activeLessons[currentIndex]) {
+        const generic = /^Aula \d+$/.test(activeLessons[currentIndex].title);
+        if (generic || !activeCourse.isDefault) {
+          // Só substitui placeholders; não inventa — usa título real do player
+          if (videoData.title) {
+            activeLessons[currentIndex] = {
+              ...activeLessons[currentIndex],
+              title: videoData.title,
+              youtubeVideoId: videoData.video_id || activeLessons[currentIndex].youtubeVideoId,
+            };
+            if (els.lessonTitle) els.lessonTitle.textContent = videoData.title;
+            renderLessonList();
+          }
+        }
+      }
     } catch {
       syncingFromPlayer = false;
     }
-  }
 
-  /* ---------- Storage ---------- */
-
-  function loadJson(key, fallback) {
-    try {
-      const raw = localStorage.getItem(key);
-      if (raw == null) return fallback;
-      return JSON.parse(raw);
-    } catch {
-      return fallback;
+    if (event?.data === window.YT?.PlayerState?.ERROR) {
+      showPlayerFallback();
     }
-  }
-
-  function saveJson(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
-  }
-
-  function persist() {
-    saveJson(STORAGE_KEYS.completed, completedIds);
-    saveJson(STORAGE_KEYS.favorites, favoriteIds);
-    saveJson(STORAGE_KEYS.lastLesson, currentLessonId);
-  }
-
-  /* ---------- Progress helpers ---------- */
-
-  function getProgress() {
-    const total = course.lessons.length;
-    const done = completedIds.filter((id) =>
-      course.lessons.some((l) => l.id === id)
-    ).length;
-    const percent = total === 0 ? 0 : Math.round((done / total) * 100);
-    return { done, total, percent };
-  }
-
-  function isCompleted(id) {
-    return completedIds.includes(id);
-  }
-
-  function isFavorite(id) {
-    return favoriteIds.includes(id);
-  }
-
-  function getLesson(id) {
-    return course.lessons.find((l) => l.id === id) || course.lessons[0];
-  }
-
-  function getLessonIndex(id) {
-    return course.lessons.findIndex((l) => l.id === id);
   }
 
   /* ---------- Navegação central ---------- */
 
-  /**
-   * Função central de troca de aula.
-   * @param {number} indice - índice 0-based na lista de aulas
-   * @param {{ skipPlayer?: boolean, silent?: boolean }} [options]
-   */
   function selecionarAula(indice, options = {}) {
     const { skipPlayer = false, silent = false } = options;
 
-    if (!Number.isInteger(indice) || indice < 0 || indice >= course.lessons.length) {
-      return;
-    }
+    if (!Number.isInteger(indice) || indice < 0) return;
+    if (activeLessons.length && indice >= activeLessons.length) return;
 
-    const lesson = course.lessons[indice];
-    currentLessonId = lesson.id;
-    persist();
-
-    atualizarInterfaceAula(lesson, indice);
+    currentIndex = indice;
+    persistProgress();
+    atualizarInterfaceAula(indice);
 
     if (!skipPlayer) {
-      carregarPlayer(lesson);
+      if (ytPlayer && typeof ytPlayer.playVideoAt === 'function' && loadedPlaylistId === activeCourse.playlistId) {
+        try {
+          navigatingProgrammatically = true;
+          ytPlayer.playVideoAt(indice);
+          window.setTimeout(() => {
+            navigatingProgrammatically = false;
+          }, 500);
+        } catch {
+          navigatingProgrammatically = false;
+          ensurePlaylistPlayer();
+        }
+      } else {
+        ensurePlaylistPlayer();
+      }
     }
 
     if (!silent) {
+      const lesson = currentLesson();
       showToast(`Exibindo ${lesson.title}`);
     }
   }
 
   function navegarAula(delta) {
-    const index = getLessonIndex(currentLessonId);
-    selecionarAula(index + delta);
+    const next = currentIndex + delta;
+    if (activeLessons.length) {
+      selecionarAula(next);
+      return;
+    }
+    // Sem lista conhecida: usa API do player
+    if (ytPlayer) {
+      try {
+        navigatingProgrammatically = true;
+        if (delta > 0) ytPlayer.nextVideo();
+        else ytPlayer.previousVideo();
+        window.setTimeout(() => {
+          const idx = ytPlayer.getPlaylistIndex?.();
+          if (typeof idx === 'number' && idx >= 0) {
+            selecionarAula(idx, { skipPlayer: true, silent: true });
+          }
+          navigatingProgrammatically = false;
+        }, 400);
+      } catch {
+        navigatingProgrammatically = false;
+      }
+    }
   }
 
-  function atualizarInterfaceAula(lesson, index) {
+  function atualizarInterfaceAula(index) {
+    const lesson = activeLessons[index] || currentLesson();
+    const total = activeLessons.length || activeCourse?.videoCount || '?';
+
+    if (els.courseTitle) els.courseTitle.textContent = activeCourse?.title || 'Curso';
+    if (els.courseDescription) {
+      els.courseDescription.textContent =
+        activeCourse?.description ||
+        'Assista pelas setas do Skill Tube para manter a interface sincronizada.';
+    }
     if (els.lessonTitle) els.lessonTitle.textContent = lesson.title;
     if (els.lessonDescription) els.lessonDescription.textContent = lesson.description;
     if (els.lessonIndicator) {
-      els.lessonIndicator.textContent = `Aula ${lesson.order} de ${course.totalLessons}`;
+      els.lessonIndicator.textContent =
+        typeof total === 'number' ? `Aula ${index + 1} de ${total}` : `Aula ${index + 1}`;
     }
+    if (els.activeCourseLabel) els.activeCourseLabel.textContent = activeCourse?.title || '';
 
     atualizarControlesNavegacao(index);
-    updateCompleteButton(lesson.id);
-    updateFavoriteButton(lesson.id);
+    updateCompleteButton(index);
+    updateFavoriteButton(index);
     renderLessonList();
     updateProgressUI();
   }
 
   function atualizarControlesNavegacao(index) {
+    const total = activeLessons.length;
     const atStart = index <= 0;
-    const atEnd = index >= course.lessons.length - 1;
+    const atEnd = total ? index >= total - 1 : false;
 
-    if (els.btnPrev) els.btnPrev.disabled = atStart;
-    if (els.btnNext) els.btnNext.disabled = atEnd;
-    if (els.playerPrev) els.playerPrev.disabled = atStart;
-    if (els.playerNext) els.playerNext.disabled = atEnd;
+    [els.btnPrev, els.playerPrev].forEach((btn) => {
+      if (btn) btn.disabled = atStart;
+    });
+    [els.btnNext, els.playerNext].forEach((btn) => {
+      if (btn) btn.disabled = total ? atEnd : false;
+    });
+  }
+
+  /* ---------- Progresso / favoritos ---------- */
+
+  function getProgress() {
+    const rec = getProgressRecord(activeCourse?.playlistId);
+    const total = activeLessons.length || activeCourse?.videoCount || 0;
+    const done = (rec.completed || []).filter((i) => i >= 0 && (!total || i < total)).length;
+    const percent = total === 0 ? 0 : Math.round((done / total) * 100);
+    return { done, total, percent };
+  }
+
+  function isCompleted(index) {
+    return getProgressRecord(activeCourse.playlistId).completed.includes(index);
+  }
+
+  function isFavorite(index) {
+    return getProgressRecord(activeCourse.playlistId).favorites.includes(index);
+  }
+
+  function toggleComplete() {
+    const rec = getProgressRecord(activeCourse.playlistId);
+    if (rec.completed.includes(currentIndex)) {
+      rec.completed = rec.completed.filter((i) => i !== currentIndex);
+      showToast('Marcação de conclusão removida');
+    } else {
+      rec.completed = [...rec.completed, currentIndex];
+      showToast('Aula marcada como concluída');
+    }
+    persistProgress();
+    updateCompleteButton(currentIndex);
+    renderLessonList();
+    updateProgressUI();
+    renderHomeLessons();
+    renderContinue();
+    renderLibrary();
+  }
+
+  function toggleFavorite() {
+    const rec = getProgressRecord(activeCourse.playlistId);
+    if (rec.favorites.includes(currentIndex)) {
+      rec.favorites = rec.favorites.filter((i) => i !== currentIndex);
+      showToast('Removido dos favoritos');
+    } else {
+      rec.favorites = [...rec.favorites, currentIndex];
+      showToast('Adicionado aos favoritos');
+    }
+    persistProgress();
+    updateFavoriteButton(currentIndex);
+    renderLessonList();
+    renderHomeLessons();
+    renderFavorites();
+  }
+
+  function updateCompleteButton(index) {
+    if (!els.btnComplete) return;
+    const done = isCompleted(index);
+    els.btnComplete.setAttribute('aria-pressed', String(done));
+    els.btnComplete.classList.toggle('is-done', done);
+    els.btnComplete.innerHTML = done
+      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg> Concluída`
+      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg> Marcar como concluída`;
+  }
+
+  function updateFavoriteButton(index) {
+    if (!els.btnFavorite) return;
+    const fav = isFavorite(index);
+    els.btnFavorite.setAttribute('aria-pressed', String(fav));
+    els.btnFavorite.classList.toggle('is-fav', fav);
+    els.btnFavorite.innerHTML = fav
+      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg> Favorito`
+      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg> Favoritar`;
   }
 
   /* ---------- Views ---------- */
@@ -418,178 +814,21 @@
     });
 
     document.querySelectorAll('[data-nav]').forEach((btn) => {
-      btn.classList.toggle('is-active', btn.getAttribute('data-nav') === view);
-      btn.setAttribute(
-        'aria-current',
-        btn.getAttribute('data-nav') === view ? 'page' : 'false'
-      );
+      const nav = btn.getAttribute('data-nav');
+      btn.classList.toggle('is-active', nav === view);
+      btn.setAttribute('aria-current', nav === view ? 'page' : 'false');
     });
 
-    if (view === 'favorites') renderFavorites();
     if (view === 'home') renderHome();
+    if (view === 'library') renderLibrary();
+    if (view === 'favorites') renderFavorites();
+    if (view === 'import') clearImportStatus();
     if (view === 'course') {
-      const index = getLessonIndex(currentLessonId);
-      selecionarAula(index < 0 ? 0 : index, { silent: true });
+      atualizarInterfaceAula(currentIndex);
+      ensurePlaylistPlayer();
     }
+
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  function openCourse(lessonId) {
-    if (lessonId) currentLessonId = lessonId;
-    else if (!course.lessons.some((l) => l.id === currentLessonId)) {
-      currentLessonId = course.lessons[0].id;
-    }
-    persist();
-    showView('course');
-  }
-
-  /* ---------- Render ---------- */
-
-  function renderAll() {
-    updateProgressUI();
-    renderHome();
-    renderFavorites();
-    // Curso é renderizado ao abrir a view (selecionarAula)
-    const index = getLessonIndex(currentLessonId);
-    if (index >= 0) {
-      atualizarInterfaceAula(course.lessons[index], index);
-    }
-  }
-
-  function updateProgressUI() {
-    const { done, total, percent } = getProgress();
-    const label = `${percent}% concluído`;
-    const detail = `${done} de ${total} aulas`;
-
-    if (els.headerProgressFill) {
-      els.headerProgressFill.style.width = `${percent}%`;
-      const bar = els.headerProgressFill.parentElement;
-      if (bar) bar.setAttribute('aria-valuenow', String(percent));
-    }
-    if (els.headerProgressText) els.headerProgressText.textContent = label;
-
-    if (els.homeProgressFill) {
-      els.homeProgressFill.style.width = `${percent}%`;
-      const bar = els.homeProgressFill.parentElement;
-      if (bar) bar.setAttribute('aria-valuenow', String(percent));
-    }
-    if (els.homeProgressText) els.homeProgressText.textContent = detail;
-    if (els.homeProgressPercent) els.homeProgressPercent.textContent = `${percent}%`;
-
-    if (els.courseProgressFill) {
-      els.courseProgressFill.style.width = `${percent}%`;
-      const bar = els.courseProgressFill.parentElement;
-      if (bar) bar.setAttribute('aria-valuenow', String(percent));
-    }
-    if (els.courseProgressText) {
-      els.courseProgressText.textContent = `${detail} · ${percent}%`;
-    }
-  }
-
-  function renderHome() {
-    renderHomeLessons();
-    renderContinue();
-    updateProgressUI();
-  }
-
-  function renderHomeLessons() {
-    const filtered = course.lessons.filter((lesson) =>
-      lesson.title.toLowerCase().includes(searchQuery)
-    );
-
-    if (els.searchResults) els.searchResults.hidden = !searchQuery;
-    if (els.searchEmpty) {
-      els.searchEmpty.hidden = !(searchQuery && filtered.length === 0);
-    }
-    if (!els.lessonCards) return;
-
-    if (searchQuery && filtered.length === 0) {
-      els.lessonCards.innerHTML = '';
-      return;
-    }
-
-    const list = searchQuery ? filtered : course.lessons;
-    els.lessonCards.innerHTML = list.map((lesson) => lessonCardHtml(lesson)).join('');
-
-    els.lessonCards.querySelectorAll('[data-open-lesson]').forEach((btn) => {
-      btn.addEventListener('click', () => openCourse(btn.getAttribute('data-open-lesson')));
-    });
-
-    els.lessonCards.querySelectorAll('[data-fav-toggle]').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleFavoriteById(btn.getAttribute('data-fav-toggle'));
-        renderHomeLessons();
-        renderFavorites();
-      });
-    });
-  }
-
-  function lessonCardHtml(lesson) {
-    const done = isCompleted(lesson.id);
-    const fav = isFavorite(lesson.id);
-    const thumb = getThumbnailUrl(lesson);
-    const thumbHtml = `<img src="${thumb}" alt="Miniatura de ${escapeHtml(lesson.title)}" loading="lazy" width="480" height="360">`;
-
-    return `
-      <article class="lesson-card ${done ? 'is-completed' : ''}">
-        <button type="button" class="lesson-card__media" data-open-lesson="${lesson.id}" aria-label="Abrir ${escapeHtml(lesson.title)}">
-          ${thumbHtml}
-          <span class="lesson-card__play" aria-hidden="true">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-          </span>
-          ${done ? '<span class="badge badge--done">Concluída</span>' : ''}
-        </button>
-        <div class="lesson-card__body">
-          <p class="lesson-card__meta">Aula ${lesson.order} de ${course.totalLessons}</p>
-          <h3 class="lesson-card__title">${escapeHtml(lesson.title)}</h3>
-          <p class="lesson-card__desc">${escapeHtml(lesson.description)}</p>
-          <div class="lesson-card__actions">
-            <button type="button" class="btn btn--primary btn--sm" data-open-lesson="${lesson.id}">Assistir</button>
-            <button type="button" class="btn btn--ghost btn--sm ${fav ? 'is-fav' : ''}" data-fav-toggle="${lesson.id}" aria-pressed="${fav}" aria-label="${fav ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="${fav ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
-              ${fav ? 'Favorito' : 'Favoritar'}
-            </button>
-          </div>
-        </div>
-      </article>
-    `;
-  }
-
-  function renderContinue() {
-    const lesson = getLesson(currentLessonId);
-    const { percent } = getProgress();
-
-    if (!els.continueSection || !els.continueCard) return;
-
-    if (percent === 100) {
-      els.continueSection.hidden = false;
-      els.continueCard.innerHTML = `
-        <div class="continue-card__content">
-          <p class="eyebrow">Parabéns</p>
-          <h3>Você concluiu todas as aulas</h3>
-          <p>Revise o conteúdo ou assista novamente quando quiser.</p>
-          <button type="button" class="btn btn--primary" id="btn-review">Revisar curso</button>
-        </div>
-      `;
-      document.getElementById('btn-review')?.addEventListener('click', () => openCourse(course.lessons[0].id));
-      return;
-    }
-
-    els.continueSection.hidden = false;
-    const thumb = getThumbnailUrl(lesson);
-    els.continueCard.innerHTML = `
-      <div class="continue-card__thumb">
-        <img src="${thumb}" alt="" width="320" height="180">
-      </div>
-      <div class="continue-card__content">
-        <p class="eyebrow">Continue de onde parou</p>
-        <h3>${escapeHtml(lesson.title)}</h3>
-        <p>Aula ${lesson.order} de ${course.totalLessons}${isCompleted(lesson.id) ? ' · já marcada como concluída' : ''}</p>
-        <button type="button" class="btn btn--primary" id="btn-resume">Retomar aula</button>
-      </div>
-    `;
-    document.getElementById('btn-resume')?.addEventListener('click', () => openCourse(lesson.id));
   }
 
   function showPlayerFallback() {
@@ -600,14 +839,246 @@
     if (els.playerFallback) els.playerFallback.hidden = true;
   }
 
+  /* ---------- Render ---------- */
+
+  function renderAll() {
+    updateProgressUI();
+    renderHome();
+    renderLibrary();
+    renderFavorites();
+  }
+
+  function updateProgressUI() {
+    const { done, total, percent } = getProgress();
+    const label = `${percent}% concluído`;
+    const detail = total ? `${done} de ${total} aulas` : `${done} concluída(s)`;
+
+    if (els.headerProgressFill) {
+      els.headerProgressFill.style.width = `${percent}%`;
+      els.headerProgressFill.parentElement?.setAttribute('aria-valuenow', String(percent));
+    }
+    if (els.headerProgressText) els.headerProgressText.textContent = label;
+    if (els.homeProgressFill) {
+      els.homeProgressFill.style.width = `${percent}%`;
+      els.homeProgressFill.parentElement?.setAttribute('aria-valuenow', String(percent));
+    }
+    if (els.homeProgressText) els.homeProgressText.textContent = detail;
+    if (els.homeProgressPercent) els.homeProgressPercent.textContent = `${percent}%`;
+    if (els.courseProgressFill) {
+      els.courseProgressFill.style.width = `${percent}%`;
+      els.courseProgressFill.parentElement?.setAttribute('aria-valuenow', String(percent));
+    }
+    if (els.courseProgressText) {
+      els.courseProgressText.textContent = `${detail} · ${percent}%`;
+    }
+  }
+
+  function renderHome() {
+    renderHomeLibrary();
+    renderHomeLessons();
+    renderContinue();
+    updateProgressUI();
+  }
+
+  function courseProgress(playlistId) {
+    const course = library.find((c) => c.playlistId === playlistId);
+    const rec = getProgressRecord(playlistId);
+    const total = course?.videoCount || course?.lessons?.length || 0;
+    const done = (rec.completed || []).filter((i) => i >= 0 && (!total || i < total)).length;
+    const percent = total === 0 ? 0 : Math.round((done / total) * 100);
+    return { done, total, percent };
+  }
+
+  function libraryCardHtml(course) {
+    const { percent, done, total } = courseProgress(course.playlistId);
+    const thumb =
+      getThumbnailUrl(course.thumbnailVideoId) ||
+      getThumbnailUrl(course.lessons?.[0]?.youtubeVideoId);
+    const thumbHtml = thumb
+      ? `<img src="${thumb}" alt="" width="480" height="270" loading="lazy">`
+      : `<div class="card-thumb-placeholder" aria-hidden="true">▶</div>`;
+
+    return `
+      <article class="library-card">
+        <button type="button" class="library-card__media" data-open-course="${escapeAttr(course.playlistId)}" aria-label="Abrir ${escapeAttr(course.title)}">
+          ${thumbHtml}
+          ${course.isDefault ? '<span class="badge badge--featured">Oficial</span>' : ''}
+        </button>
+        <div class="library-card__body">
+          <h3 class="library-card__title">${escapeHtml(course.title)}</h3>
+          <p class="library-card__meta">${total ? `${total} aulas` : 'Playlist YouTube'} · ${percent}% concluído</p>
+          <div class="progress-bar library-card__progress" aria-hidden="true">
+            <div class="progress-bar__fill" style="width:${percent}%"></div>
+          </div>
+          <div class="library-card__actions">
+            <button type="button" class="btn btn--primary btn--sm" data-open-course="${escapeAttr(course.playlistId)}">Abrir</button>
+            ${
+              course.isDefault
+                ? ''
+                : `<button type="button" class="btn btn--ghost btn--sm" data-remove-course="${escapeAttr(course.playlistId)}">Remover</button>`
+            }
+          </div>
+          <p class="sr-only">${done} de ${total || '?'} concluídas</p>
+        </div>
+      </article>
+    `;
+  }
+
+  function bindLibraryCards(root) {
+    root?.querySelectorAll('[data-open-course]').forEach((btn) => {
+      btn.addEventListener('click', () => openCourseByPlaylistId(btn.getAttribute('data-open-course')));
+    });
+    root?.querySelectorAll('[data-remove-course]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeCourse(btn.getAttribute('data-remove-course'));
+      });
+    });
+  }
+
+  function renderHomeLibrary() {
+    if (!els.homeLibraryGrid) return;
+    els.homeLibraryGrid.innerHTML = library.map(libraryCardHtml).join('');
+    bindLibraryCards(els.homeLibraryGrid);
+  }
+
+  function renderLibrary() {
+    if (!els.libraryGrid) return;
+    if (els.libraryEmpty) els.libraryEmpty.hidden = library.length > 0;
+    els.libraryGrid.innerHTML = library.map(libraryCardHtml).join('');
+    bindLibraryCards(els.libraryGrid);
+  }
+
+  function renderHomeLessons() {
+    if (!els.lessonCards) return;
+    const lessons = activeLessons.length ? activeLessons : [];
+    const filtered = lessons.filter((lesson) =>
+      lesson.title.toLowerCase().includes(searchQuery)
+    );
+
+    if (els.searchResults) els.searchResults.hidden = !searchQuery;
+    if (els.searchEmpty) {
+      els.searchEmpty.hidden = !(searchQuery && filtered.length === 0);
+    }
+
+    if (!lessons.length) {
+      els.lessonCards.innerHTML = `
+        <div class="empty-state" style="grid-column:1/-1">
+          Abra um curso para listar as aulas. Em playlists importadas, a lista aparece após o player carregar.
+        </div>`;
+      return;
+    }
+
+    if (searchQuery && filtered.length === 0) {
+      els.lessonCards.innerHTML = '';
+      return;
+    }
+
+    const list = searchQuery ? filtered : lessons;
+    const total = lessons.length;
+    els.lessonCards.innerHTML = list
+      .map((lesson) => {
+        const index = lesson.playlistIndex ?? lesson.order - 1;
+        const done = isCompleted(index);
+        const fav = isFavorite(index);
+        const thumb = getThumbnailUrl(lesson.youtubeVideoId || activeCourse?.thumbnailVideoId);
+        const thumbHtml = thumb
+          ? `<img src="${thumb}" alt="Miniatura de ${escapeHtml(lesson.title)}" loading="lazy" width="480" height="360">`
+          : `<div class="card-thumb-placeholder" aria-hidden="true">${lesson.order}</div>`;
+
+        return `
+          <article class="lesson-card ${done ? 'is-completed' : ''}">
+            <button type="button" class="lesson-card__media" data-open-index="${index}" aria-label="Abrir ${escapeHtml(lesson.title)}">
+              ${thumbHtml}
+              <span class="lesson-card__play" aria-hidden="true">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              </span>
+              ${done ? '<span class="badge badge--done">Concluída</span>' : ''}
+            </button>
+            <div class="lesson-card__body">
+              <p class="lesson-card__meta">Aula ${lesson.order} de ${total}</p>
+              <h3 class="lesson-card__title">${escapeHtml(lesson.title)}</h3>
+              <p class="lesson-card__desc">${escapeHtml(lesson.description)}</p>
+              <div class="lesson-card__actions">
+                <button type="button" class="btn btn--primary btn--sm" data-open-index="${index}">Assistir</button>
+                <button type="button" class="btn btn--ghost btn--sm ${fav ? 'is-fav' : ''}" data-fav-index="${index}" aria-pressed="${fav}">
+                  ${fav ? 'Favorito' : 'Favoritar'}
+                </button>
+              </div>
+            </div>
+          </article>
+        `;
+      })
+      .join('');
+
+    els.lessonCards.querySelectorAll('[data-open-index]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        currentIndex = Number(btn.getAttribute('data-open-index'));
+        persistProgress();
+        showView('course');
+        selecionarAula(currentIndex, { silent: true });
+      });
+    });
+
+    els.lessonCards.querySelectorAll('[data-fav-index]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = Number(btn.getAttribute('data-fav-index'));
+        const rec = getProgressRecord(activeCourse.playlistId);
+        if (rec.favorites.includes(idx)) {
+          rec.favorites = rec.favorites.filter((i) => i !== idx);
+        } else {
+          rec.favorites = [...rec.favorites, idx];
+        }
+        persistProgress();
+        renderHomeLessons();
+        renderFavorites();
+      });
+    });
+  }
+
+  function renderContinue() {
+    if (!els.continueSection || !els.continueCard || !activeCourse) return;
+    const lesson = currentLesson();
+    const { percent } = getProgress();
+    const thumb = getThumbnailUrl(lesson.youtubeVideoId || activeCourse.thumbnailVideoId);
+
+    els.continueSection.hidden = false;
+    els.continueCard.innerHTML = `
+      <div class="continue-card__thumb">
+        ${
+          thumb
+            ? `<img src="${thumb}" alt="" width="320" height="180">`
+            : `<div class="card-thumb-placeholder">${lesson.order}</div>`
+        }
+      </div>
+      <div class="continue-card__content">
+        <p class="eyebrow">${percent === 100 ? 'Curso concluído' : 'Continue de onde parou'}</p>
+        <h3>${escapeHtml(activeCourse.title)}</h3>
+        <p>${escapeHtml(lesson.title)} · Aula ${currentIndex + 1}${
+          activeLessons.length ? ` de ${activeLessons.length}` : ''
+        }</p>
+        <button type="button" class="btn btn--primary" id="btn-resume">Retomar</button>
+      </div>
+    `;
+    document.getElementById('btn-resume')?.addEventListener('click', () => openActiveCourse());
+  }
+
   function renderLessonList() {
     if (!els.lessonList) return;
 
-    els.lessonList.innerHTML = course.lessons
+    if (!activeLessons.length) {
+      els.lessonList.innerHTML = `
+        <li class="lesson-list__hint">A lista de aulas será preenchida quando o player carregar a playlist.</li>
+      `;
+      return;
+    }
+
+    els.lessonList.innerHTML = activeLessons
       .map((lesson, index) => {
-        const active = lesson.id === currentLessonId;
-        const done = isCompleted(lesson.id);
-        const fav = isFavorite(lesson.id);
+        const active = index === currentIndex;
+        const done = isCompleted(index);
+        const fav = isFavorite(index);
         return `
           <li>
             <button type="button"
@@ -626,99 +1097,61 @@
       .join('');
 
     els.lessonList.querySelectorAll('[data-select-index]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        selecionarAula(Number(btn.getAttribute('data-select-index')));
-      });
+      btn.addEventListener('click', () => selecionarAula(Number(btn.getAttribute('data-select-index'))));
     });
-  }
-
-  function toggleComplete() {
-    toggleCompleteById(currentLessonId);
-    updateCompleteButton(currentLessonId);
-    renderLessonList();
-    updateProgressUI();
-    renderHomeLessons();
-    renderContinue();
-  }
-
-  function toggleCompleteById(id) {
-    if (isCompleted(id)) {
-      completedIds = completedIds.filter((x) => x !== id);
-      showToast('Marcação de conclusão removida');
-    } else {
-      completedIds = [...completedIds, id];
-      showToast('Aula marcada como concluída');
-    }
-    persist();
-  }
-
-  function updateCompleteButton(id) {
-    if (!els.btnComplete) return;
-    const done = isCompleted(id);
-    els.btnComplete.setAttribute('aria-pressed', String(done));
-    els.btnComplete.classList.toggle('is-done', done);
-    els.btnComplete.innerHTML = done
-      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg> Concluída`
-      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg> Marcar como concluída`;
-  }
-
-  function toggleFavorite() {
-    toggleFavoriteById(currentLessonId);
-    updateFavoriteButton(currentLessonId);
-    renderLessonList();
-    renderHomeLessons();
-    renderFavorites();
-  }
-
-  function toggleFavoriteById(id) {
-    if (isFavorite(id)) {
-      favoriteIds = favoriteIds.filter((x) => x !== id);
-      showToast('Removido dos favoritos');
-    } else {
-      favoriteIds = [...favoriteIds, id];
-      showToast('Adicionado aos favoritos');
-    }
-    persist();
-  }
-
-  function updateFavoriteButton(id) {
-    if (!els.btnFavorite) return;
-    const fav = isFavorite(id);
-    els.btnFavorite.setAttribute('aria-pressed', String(fav));
-    els.btnFavorite.classList.toggle('is-fav', fav);
-    els.btnFavorite.innerHTML = fav
-      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg> Favorito`
-      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg> Favoritar`;
   }
 
   function renderFavorites() {
     if (!els.favoritesList || !els.favoritesEmpty) return;
 
-    const favLessons = course.lessons.filter((l) => isFavorite(l.id));
+    const items = [];
+    library.forEach((course) => {
+      const rec = getProgressRecord(course.playlistId);
+      (rec.favorites || []).forEach((index) => {
+        const lesson = course.lessons?.[index];
+        items.push({
+          course,
+          index,
+          title: lesson?.title || `Aula ${index + 1}`,
+          thumb: getThumbnailUrl(lesson?.youtubeVideoId || course.thumbnailVideoId),
+        });
+      });
+    });
 
-    if (favLessons.length === 0) {
+    if (!items.length) {
       els.favoritesEmpty.hidden = false;
       els.favoritesList.innerHTML = '';
       return;
     }
 
     els.favoritesEmpty.hidden = true;
-    els.favoritesList.innerHTML = favLessons.map((lesson) => lessonCardHtml(lesson)).join('');
+    els.favoritesList.innerHTML = items
+      .map(
+        (item) => `
+        <article class="lesson-card">
+          <button type="button" class="lesson-card__media" data-fav-open="${escapeAttr(item.course.playlistId)}" data-fav-index="${item.index}">
+            ${
+              item.thumb
+                ? `<img src="${item.thumb}" alt="" loading="lazy" width="480" height="360">`
+                : `<div class="card-thumb-placeholder">${item.index + 1}</div>`
+            }
+          </button>
+          <div class="lesson-card__body">
+            <p class="lesson-card__meta">${escapeHtml(item.course.title)}</p>
+            <h3 class="lesson-card__title">${escapeHtml(item.title)}</h3>
+            <button type="button" class="btn btn--primary btn--sm" data-fav-open="${escapeAttr(item.course.playlistId)}" data-fav-index="${item.index}">Assistir</button>
+          </div>
+        </article>
+      `
+      )
+      .join('');
 
-    els.favoritesList.querySelectorAll('[data-open-lesson]').forEach((btn) => {
-      btn.addEventListener('click', () => openCourse(btn.getAttribute('data-open-lesson')));
-    });
-
-    els.favoritesList.querySelectorAll('[data-fav-toggle]').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleFavoriteById(btn.getAttribute('data-fav-toggle'));
-        renderFavorites();
-        renderHomeLessons();
-        if (currentView === 'course') {
-          updateFavoriteButton(currentLessonId);
-          renderLessonList();
-        }
+    els.favoritesList.querySelectorAll('[data-fav-open]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const pid = btn.getAttribute('data-fav-open');
+        const idx = Number(btn.getAttribute('data-fav-index'));
+        openCourseByPlaylistId(pid);
+        selecionarAula(idx, { silent: true });
       });
     });
   }
@@ -728,9 +1161,7 @@
     els.toast.textContent = message;
     els.toast.classList.add('is-visible');
     clearTimeout(showToast._timer);
-    showToast._timer = setTimeout(() => {
-      els.toast.classList.remove('is-visible');
-    }, 2400);
+    showToast._timer = setTimeout(() => els.toast.classList.remove('is-visible'), 2400);
   }
 
   function escapeHtml(str) {
@@ -741,8 +1172,13 @@
       .replace(/"/g, '&quot;');
   }
 
+  function escapeAttr(str) {
+    return escapeHtml(str).replace(/'/g, '&#39;');
+  }
+
   window.SkillTubeApp = {
-    openCourse,
+    openActiveCourse,
+    openCourseByPlaylistId,
     selecionarAula,
     navegarAula,
     showPlayerFallback,
