@@ -275,6 +275,10 @@
     els.favoritesEmpty = document.getElementById('favorites-empty');
     els.toast = document.getElementById('toast');
     els.activeCourseLabel = document.getElementById('active-course-label');
+    els.renameModal = document.getElementById('rename-modal');
+    els.renameForm = document.getElementById('rename-form');
+    els.renamePlaylistId = document.getElementById('rename-playlist-id');
+    els.renameTitle = document.getElementById('rename-title');
   }
 
   function bindEvents() {
@@ -320,9 +324,16 @@
     els.btnFavorite?.addEventListener('click', toggleFavorite);
 
     els.importForm?.addEventListener('submit', onImportSubmit);
+    els.renameForm?.addEventListener('submit', onRenameSubmit);
+    document.querySelectorAll('[data-close-rename]').forEach((el) => {
+      el.addEventListener('click', closeRenameModal);
+    });
 
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeMobileNav();
+      if (e.key === 'Escape') {
+        closeMobileNav();
+        closeRenameModal();
+      }
     });
   }
 
@@ -340,6 +351,12 @@
     const urlValue = els.importUrl?.value || '';
     const customTitle = (els.importTitle?.value || '').trim();
     const parsed = parsePlaylistUrl(urlValue);
+
+    if (!customTitle) {
+      setImportStatus('Informe um nome para o curso.', 'error');
+      els.importTitle?.focus();
+      return;
+    }
 
     if (!parsed.ok) {
       setImportStatus(parsed.error, 'error');
@@ -361,7 +378,7 @@
         const entry = {
           playlistId: parsed.playlistId,
           sourceUrl: parsed.sourceUrl,
-          title: customTitle || `Playlist ${parsed.playlistId.slice(0, 8)}…`,
+          title: customTitle,
           description:
             'Playlist importada do YouTube. Títulos oficiais das aulas podem aparecer como “Aula N” até a sincronização com o player.',
           isDefault: false,
